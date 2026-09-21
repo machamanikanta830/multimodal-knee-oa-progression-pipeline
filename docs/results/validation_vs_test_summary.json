@@ -1,0 +1,62 @@
+[
+  {
+    "model": "Logistic A (Primary Tabular)",
+    "val_AUROC": 0.651692,
+    "test_AUROC": 0.643582,
+    "diff_AUROC": -0.00811,
+    "val_AUPRC": 0.248999,
+    "test_AUPRC": 0.236237,
+    "diff_AUPRC": -0.012762,
+    "val_Brier": 0.125928,
+    "test_Brier": 0.126882,
+    "diff_Brier": 0.000954
+  },
+  {
+    "model": "DenseNet121 (Primary Image)",
+    "val_AUROC": 0.677856,
+    "test_AUROC": 0.731963,
+    "diff_AUROC": 0.054107,
+    "val_AUPRC": 0.295103,
+    "test_AUPRC": 0.371287,
+    "diff_AUPRC": 0.076184,
+    "val_Brier": 0.125439,
+    "test_Brier": 0.117505,
+    "diff_Brier": -0.007934
+  },
+  {
+    "model": "Multimodal Fusion A (Primary)",
+    "val_AUROC": 0.700105,
+    "test_AUROC": 0.728164,
+    "diff_AUROC": 0.028059,
+    "val_AUPRC": 0.304799,
+    "test_AUPRC": 0.367969,
+    "diff_AUPRC": 0.06317,
+    "val_Brier": 0.122227,
+    "test_Brier": 0.117951,
+    "diff_Brier": -0.004276
+  },
+  {
+    "model": "Logistic B (Sensitivity Tabular)",
+    "val_AUROC": 0.663953,
+    "test_AUROC": 0.685667,
+    "diff_AUROC": 0.021714,
+    "val_AUPRC": 0.248517,
+    "test_AUPRC": 0.269416,
+    "diff_AUPRC": 0.020899,
+    "val_Brier": 0.12548,
+    "test_Brier": 0.123897,
+    "diff_Brier": -0.001583
+  },
+  {
+    "model": "Multimodal Fusion B (Sensitivity)",
+    "val_AUROC": 0.703276,
+    "test_AUROC": 0.735149,
+    "diff_AUROC": 0.031873,
+    "val_AUPRC": 0.298246,
+    "test_AUPRC": 0.37369,
+    "diff_AUPRC": 0.075444,
+    "val_Brier": 0.122188,
+    "test_Brier": 0.116845,
+    "diff_Brier": -0.005343
+  }
+]

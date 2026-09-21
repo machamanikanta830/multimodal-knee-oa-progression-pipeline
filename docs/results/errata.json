@@ -1,0 +1,43 @@
+{
+  "erratum_id": "ERRATUM-2026-09-H01",
+  "created_at_utc": "2026-09-18T19:21:00Z",
+  "target_artifact": "docs/results/validation_vs_test_summary.json",
+  "target_artifact_sha256": "0baed5db4ea8f20b44029956ba93042eb059b8e3c131e2e2df592ceefc15f447",
+  "status": "PRESERVED_ARCHIVAL_ARTIFACT_WITH_DOCUMENTARY_ERRATUM",
+  "impact_on_test_results": false,
+  "recomputed_metrics": false,
+  "authoritative_source_artifacts": [
+    "data/processed/modeling/fusion/v1/selected_fusion.json",
+    "data/processed/modeling/fusion/v1/validation_metrics.json",
+    "data/processed/modeling/final_freeze/v1/final_model_freeze.json"
+  ],
+  "authoritative_fusion_b_validation_metrics": {
+    "model_id": "multimodal_fusion_B_sensitivity",
+    "role": "BASELINE-KL SENSITIVITY",
+    "selected_alpha_image": 0.60,
+    "selected_alpha_tabular": 0.40,
+    "partition": "VALIDATION",
+    "observations": 1044,
+    "positive_events": 161,
+    "prevalence": 0.15421455938697318,
+    "AUROC": 0.6948924825728214,
+    "AUPRC": 0.29928367626042385,
+    "Brier": 0.1227010693382655,
+    "log_loss": 0.40219474908343694,
+    "calibration": {
+      "intercept": 0.1186880050977567,
+      "slope": 0.9490194736320084,
+      "status": "Joint unpenalized validation diagnostic; never applied."
+    }
+  },
+  "held_out_test_metrics_unaffected": {
+    "model_id": "multimodal_fusion_B_sensitivity",
+    "partition": "TEST",
+    "observations": 1044,
+    "positive_events": 161,
+    "AUROC": 0.735149,
+    "AUPRC": 0.373690,
+    "Brier": 0.116845,
+    "log_loss": 0.383931
+  }
+}

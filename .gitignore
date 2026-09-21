@@ -1,0 +1,94 @@
+# Python caches and build products
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local Python environments and secrets
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+.python-version
+.direnv/
+
+# Editors and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local scratch outputs
+/.local/
+/tmp/
+
+# OAI and derived data. Keep the directory markers and data documentation trackable.
+/data/raw/*
+!/data/raw/.gitkeep
+/data/interim/*
+!/data/interim/.gitkeep
+/data/processed/*
+!/data/processed/.gitkeep
+!/data/README.md
+
+# Large medical/image data if placed in another data subdirectory
+/data/**/*.dcm
+/data/**/*.dicom
+/data/**/*.nii
+/data/**/*.nii.gz
+/data/**/*.mha
+/data/**/*.mhd
+/data/**/*.nrrd
+/data/**/*.png
+/data/**/*.jpg
+/data/**/*.jpeg
+/data/**/*.tif
+/data/**/*.tiff
+/data/**/*.bmp
+
+# Model checkpoints and serialized fitted models (future milestones)
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.h5
+*.hdf5
+*.joblib
+*.pkl
+*.parquet
+*.npy
+*.npz
+*.tar.gz
+*.tar
+*.zip
+
+# Concurrency and data locks (fail closed on data locks; preserve dependency lockfiles)
+/data/**/*.lock
+*.json.lock
+*.jsonl.lock
+*.filelock
+*.lock
+!uv.lock
+!poetry.lock
+!Pipfile.lock
+!requirements*.lock
+/checkpoints/
+/artifacts/models/
+
+# Notebook execution artifacts; notebook source remains trackable
+.ipynb_checkpoints/
+
+# Private research reports, audits, and operational runbooks
+/reports/*
+!/reports/.gitkeep
+*.audit.json
+runbooks/
+

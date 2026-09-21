@@ -1,0 +1,60 @@
+{
+  "replicates": 1000,
+  "seed": 65027,
+  "unit": "participant",
+  "confidence_level": 0.95,
+  "method": "percentile; conditional on fitted development models and frozen fusion weights",
+  "intervals": {
+    "logistic__formulation_A": {
+      "AUROC": {
+        "lower": 0.595077,
+        "upper": 0.689084,
+        "valid_replicates": 1000
+      },
+      "AUPRC": {
+        "lower": 0.190498,
+        "upper": 0.300165,
+        "valid_replicates": 1000
+      },
+      "Brier": {
+        "lower": 0.111868,
+        "upper": 0.14336,
+        "valid_replicates": 1000
+      }
+    },
+    "DenseNet121_selected": {
+      "AUROC": {
+        "lower": 0.684374,
+        "upper": 0.773632,
+        "valid_replicates": 1000
+      },
+      "AUPRC": {
+        "lower": 0.293339,
+        "upper": 0.461439,
+        "valid_replicates": 1000
+      },
+      "Brier": {
+        "lower": 0.10227,
+        "upper": 0.134993,
+        "valid_replicates": 1000
+      }
+    },
+    "multimodal_fusion_A_selected": {
+      "AUROC": {
+        "lower": 0.679842,
+        "upper": 0.77059,
+        "valid_replicates": 1000
+      },
+      "AUPRC": {
+        "lower": 0.289785,
+        "upper": 0.450085,
+        "valid_replicates": 1000
+      },
+      "Brier": {
+        "lower": 0.103593,
+        "upper": 0.134592,
+        "valid_replicates": 1000
+      }
+    }
+  }
+}

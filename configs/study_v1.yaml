@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "config_name": "study_v1",
+  "status": "human_approved",
+  "unit_of_analysis": "participant-knee",
+  "retain_both_eligible_knees": true,
+  "baseline_visit": "V00",
+  "followup_visit": "V06",
+  "followup_months_approximate": 48,
+  "radiographic_read_project": "15",
+  "allowed_baseline_kl_grades": [0, 1, 2, 3],
+  "kl_progression_minimum_grade_increase": 1,
+  "replacement_rule": {
+    "event": "documented knee replacement strictly after the baseline X-ray and on or before the V06 boundary",
+    "event_date_variables": {"left": "lkdate", "right": "rkdate"},
+    "boundary_when_v06_xray_exists": "actual linked V06 X-ray acquisition date",
+    "boundary_when_v06_xray_missing": "baseline X-ray acquisition date plus 48 calendar months",
+    "postbaseline_replacement_as_predictor": false
+  },
+  "primary_outcome": "composite_progression",
+  "primary_outcome_definition": "radiographic_kl_progression OR replacement_before_v06",
+  "sensitivity_outcomes": [
+    "radiographic_kl_progression",
+    "jsn_progression"
+  ],
+  "jsn_progression_minimum_grade_increase": 1,
+  "master_analysis_population": "composite_analysis_eligible",
+  "radiographic_sensitivity_population": "radiographic_analysis_eligible",
+  "reviewed_reference_counts": {
+    "composite_analysis_eligible": {"knees": 6961, "participants": 3621},
+    "radiographic_analysis_eligible": {"knees": 6851, "participants": 3583}
+  },
+  "future_partitioning": {
+    "required_grouping_level": "participant",
+    "group_key": "subjectkey",
+    "both_knees_must_share_partition": true,
+    "implemented_in_this_milestone": false
+  },
+  "prohibited_this_milestone": [
+    "model_training",
+    "image_download",
+    "train_validation_test_split",
+    "missing_value_imputation"
+  ]
+}

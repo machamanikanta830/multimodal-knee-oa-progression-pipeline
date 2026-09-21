@@ -1,0 +1,68 @@
+{
+  "primary": {
+    "logistic__formulation_A": {
+      "observations": 1044,
+      "positive_events": 161,
+      "prevalence": 0.15421455938697318,
+      "AUROC": 0.643582,
+      "AUPRC": 0.236237,
+      "Brier": 0.126882,
+      "log_loss": 0.415345,
+      "calibration_intercept": -0.0446,
+      "calibration_slope": 0.9869,
+      "calibration_status": "converged"
+    },
+    "DenseNet121_selected": {
+      "observations": 1044,
+      "positive_events": 161,
+      "prevalence": 0.15421455938697318,
+      "AUROC": 0.731963,
+      "AUPRC": 0.371287,
+      "Brier": 0.117505,
+      "log_loss": 0.390618,
+      "calibration_intercept": -0.0351,
+      "calibration_slope": 0.8035,
+      "calibration_status": "converged"
+    },
+    "multimodal_fusion_A_selected": {
+      "observations": 1044,
+      "positive_events": 161,
+      "prevalence": 0.15421455938697318,
+      "AUROC": 0.728164,
+      "AUPRC": 0.367969,
+      "Brier": 0.117951,
+      "log_loss": 0.387339,
+      "calibration_intercept": 0.6561,
+      "calibration_slope": 1.3184,
+      "calibration_status": "converged"
+    }
+  },
+  "sensitivity": {
+    "logistic__formulation_B": {
+      "role": "BASELINE-KL SENSITIVITY",
+      "observations": 1044,
+      "positive_events": 161,
+      "prevalence": 0.15421455938697318,
+      "AUROC": 0.685667,
+      "AUPRC": 0.269416,
+      "Brier": 0.123897,
+      "log_loss": 0.404365,
+      "calibration_intercept": 0.2871,
+      "calibration_slope": 1.1878,
+      "calibration_status": "converged"
+    },
+    "multimodal_fusion_B_selected": {
+      "role": "BASELINE-KL SENSITIVITY",
+      "observations": 1044,
+      "positive_events": 161,
+      "prevalence": 0.15421455938697318,
+      "AUROC": 0.735149,
+      "AUPRC": 0.37369,
+      "Brier": 0.116845,
+      "log_loss": 0.383931,
+      "calibration_intercept": 0.402,
+      "calibration_slope": 1.1409,
+      "calibration_status": "converged"
+    }
+  }
+}

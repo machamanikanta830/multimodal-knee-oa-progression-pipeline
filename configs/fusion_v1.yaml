@@ -1,0 +1,26 @@
+{
+  "version": "fusion_primary_v1",
+  "target": "composite_progression",
+  "primary_formulation": "formulation_A",
+  "sensitivity_formulation": "formulation_B",
+  "models": {
+    "image": "DenseNet121_selected",
+    "tabular_primary": "logistic__formulation_A",
+    "tabular_sensitivity": "logistic__formulation_B"
+  },
+  "alpha_grid": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+  "selection": [
+    "validation_AUROC_descending",
+    "validation_AUPRC_descending",
+    "validation_Brier_ascending",
+    "validation_log_loss_ascending",
+    "distance_to_half_ascending",
+    "alpha_ascending"
+  ],
+  "seed": 64026,
+  "bootstrap_seed": 64027,
+  "bootstrap_replicates": 1000,
+  "confidence_level": 0.95,
+  "calibration_curve": {"bins": 10, "strategy": "quantile"},
+  "test_scoring_permitted": false
+}

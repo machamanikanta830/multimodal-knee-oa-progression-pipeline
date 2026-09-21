@@ -1,0 +1,30 @@
+{
+  "version": "image_primary_v1",
+  "architecture": "DenseNet121",
+  "weights": "DenseNet121_Weights.IMAGENET1K_V1",
+  "target": "composite_progression",
+  "seed": 63026,
+  "bootstrap_seed": 63027,
+  "bootstrap_replicates": 1000,
+  "batch_size": 2,
+  "workers": 0,
+  "input_size": 320,
+  "percentiles": [0.5, 99.5],
+  "augmentation": {"degrees": 5.0, "translation": 0.02, "scale": [0.95, 1.05], "horizontal_flip": false, "vertical_flip": false, "fill": 0.0},
+  "loss": "unweighted_BCEWithLogitsLoss",
+  "optimizer": "AdamW",
+  "weight_decay": 0.0001,
+  "head_warmup_epochs": 0,
+  "minimum_epochs": 3,
+  "patience": 5,
+  "candidates": [
+    {"index": 0, "frozen_backbone": true, "lr": 0.001, "epochs": 10},
+    {"index": 1, "frozen_backbone": false, "lr": 0.0001, "epochs": 25},
+    {"index": 2, "frozen_backbone": false, "lr": 0.00003, "epochs": 25}
+  ],
+  "selection": ["AUROC_desc", "AUPRC_desc", "Brier_asc", "log_loss_asc", "candidate_index_asc"],
+  "deterministic_algorithms": true,
+  "cuda_amp": true,
+  "local_compute_gate": {"maximum_projected_hours": 2.0, "benchmark_batches": 3},
+  "test_prediction_permitted": false
+}

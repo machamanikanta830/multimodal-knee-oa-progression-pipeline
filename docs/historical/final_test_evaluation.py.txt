@@ -1,0 +1,1080 @@
+"""Milestone 6G-B: One-Time Coordinated TEST Evaluation.
+
+Executes the frozen final TEST evaluation protocol across:
+- Primary Tabular: Logistic Regression Formulation A (14 features)
+- Primary Image: DenseNet121 Candidate 2
+- Primary Multimodal: Multimodal Fusion A (alpha = 0.50)
+- Sensitivity Tabular: Logistic Regression Formulation B (14 features + baseline_kl)
+- Sensitivity Multimodal: Multimodal Fusion B (alpha = 0.60)
+
+Enforces strict two-command separation:
+1. prepare: Pre-scoring audit, Stage-A import, tabular projection inference, pre-score freeze (0 outcomes).
+2. score: One-time scoring after code freeze verification (composite_progression attached).
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+from datetime import UTC, datetime
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import (
+    average_precision_score,
+    brier_score_loss,
+    log_loss,
+    precision_recall_curve,
+    roc_auc_score,
+    roc_curve,
+)
+from threadpoolctl import threadpool_limits
+
+from imaging.artifact_io import sha256_file
+from modeling import final_freeze, tabular
+from modeling.tabular import FEATURE_SETS
+from multimodal.freeze import require
+
+DEFAULT_FINAL_TEST_DIR = Path("data/processed/modeling/final_test/v1")
+STAGE_A_CANONICAL_DIR = DEFAULT_FINAL_TEST_DIR / "stage_a"
+DOWNLOADS_STAGE_A_DIR = Path(
+    os.path.expanduser("~/Downloads/knee_oa_test_return/test_image_inference_return")
+)
+DOWNLOADS_ARCHIVE_PATH = Path(os.path.expanduser("~/Downloads/test_image_inference_return.tar.gz"))
+
+FINAL_DATASET_PATH = Path("data/processed/multimodal/final_v1/final_multimodal_dataset.parquet")
+KNEE_SPLIT_PATH = Path("data/processed/multimodal/final_v1/splits/v1/knee_split_manifest.parquet")
+PARTICIPANT_SPLIT_PATH = Path(
+    "data/processed/multimodal/final_v1/splits/v1/participant_split_manifest.parquet"
+)
+
+LOGISTIC_A_MODEL_PATH = Path(
+    "data/processed/modeling/tabular/v1/models/logistic__formulation_A__candidate_0.joblib"
+)
+LOGISTIC_B_MODEL_PATH = Path(
+    "data/processed/modeling/tabular/v1/models/logistic__formulation_B__candidate_0.joblib"
+)
+
+EXPECTED_STAGE_A_ARCHIVE_SHA = "3feda90614e870ab26a043a332c4e0b2e35a3f813ce22ca39638eedf9053c093"
+EXPECTED_IMAGE_PREDS_SHA = "0942a43090d28b8a3a18bb4ee545794fdf8ee3a34e4f70e1cb39a52fcf90efcf"
+EXPECTED_STAGE_A_FREEZE_SHA = "1ef4c57f03c80b0a05f0ae6a34899e1f6dc053f3ef09e2cff28558e932bfb5db"
+EXPECTED_STAGE_A_LOG_SHA = "cb1d96e715930eaa7f9404c48cc6e40431341e58f07395c5691781077ec6e70d"
+EXPECTED_STAGE_A_HASHES_SHA = "e2ba19637f44617f3535d2ef914f2fea90598ec48e29b417b1770f2f18ce6155"
+
+ALPHA_PRIMARY_A = 0.50
+ALPHA_SENSITIVITY_B = 0.60
+TEST_BOOTSTRAP_SEED = 65027
+TEST_BOOTSTRAP_REPLICATES = 1000
+EXPECTED_TEST_KNEES = 1044
+EXPECTED_TEST_PARTICIPANTS = 543
+
+IDENTITY_KEYS = ["participant_id", "knee_side_code", "baseline_visit"]
+FORBIDDEN_PREPARE_TERMS = ["composite_progression", "kl_progression", "jsn_progression"]
+
+
+def run_preflight_audit() -> dict:
+    """Execute Phase 1 pre-scoring read-only audit of all 14 contractual prerequisites."""
+    print("--- PHASE 1: PRE-SCORING READ-ONLY AUDIT ---")
+
+    # 1. Verify final 6F-R development freeze hashes
+    dev_hashes = final_freeze.verify_development_artifacts()
+    require(
+        dev_hashes == final_freeze.APPROVED_HASHES,
+        "Development artifacts hash mismatch against approved 6F-R freeze",
+    )
+    print("[PASS] 1. Development freeze hashes verified bit-for-bit against APPROVED_HASHES.")
+
+    # 2. Logistic A model artifact SHA
+    log_a_sha = sha256_file(LOGISTIC_A_MODEL_PATH)
+    require(
+        log_a_sha == final_freeze.APPROVED_HASHES["tabular_logistic_A_model"],
+        f"Logistic A model SHA drifted: {log_a_sha}",
+    )
+    print(f"[PASS] 2. Logistic Formulation A model SHA verified: {log_a_sha}")
+
+    # 3. Logistic B model artifact SHA
+    log_b_sha = sha256_file(LOGISTIC_B_MODEL_PATH)
+    require(
+        log_b_sha == final_freeze.APPROVED_HASHES["tabular_logistic_B_model"],
+        f"Logistic B model SHA drifted: {log_b_sha}",
+    )
+    print(f"[PASS] 3. Logistic Formulation B model SHA verified: {log_b_sha}")
+
+    # 4. Stage-A return archive SHA
+    require(DOWNLOADS_ARCHIVE_PATH.is_file(), f"Missing Stage A archive: {DOWNLOADS_ARCHIVE_PATH}")
+    archive_sha = sha256_file(DOWNLOADS_ARCHIVE_PATH)
+    require(
+        archive_sha == EXPECTED_STAGE_A_ARCHIVE_SHA,
+        f"Stage A archive SHA mismatch: expected {EXPECTED_STAGE_A_ARCHIVE_SHA}, got {archive_sha}",
+    )
+    print(f"[PASS] 4. Stage-A return archive SHA verified: {archive_sha}")
+
+    # 5. Blind image prediction SHA
+    source_img_preds = DOWNLOADS_STAGE_A_DIR / "test_image_predictions.parquet"
+    require(source_img_preds.is_file(), f"Missing image predictions: {source_img_preds}")
+    img_pred_sha = sha256_file(source_img_preds)
+    require(
+        img_pred_sha == EXPECTED_IMAGE_PREDS_SHA,
+        f"Image predictions SHA mismatch: expected {EXPECTED_IMAGE_PREDS_SHA}, got {img_pred_sha}",
+    )
+    print(f"[PASS] 5. Blind TEST image predictions SHA verified: {img_pred_sha}")
+
+    # 6. Stage-A inference_run_freeze provenance
+    source_rf_path = DOWNLOADS_STAGE_A_DIR / "inference_run_freeze.json"
+    require(source_rf_path.is_file(), f"Missing run freeze: {source_rf_path}")
+    rf_sha = sha256_file(source_rf_path)
+    require(
+        rf_sha == EXPECTED_STAGE_A_FREEZE_SHA,
+        f"Run freeze SHA mismatch: expected {EXPECTED_STAGE_A_FREEZE_SHA}, got {rf_sha}",
+    )
+    rf = json.loads(source_rf_path.read_text(encoding="utf-8"))
+    require(
+        rf.get("checkpoint_sha256") == final_freeze.APPROVED_HASHES["image_selected_checkpoint"],
+        "Image checkpoint SHA mismatch in Stage-A run freeze",
+    )
+    require(
+        rf.get("image_count") == EXPECTED_TEST_KNEES,
+        f"Image count mismatch: expected {EXPECTED_TEST_KNEES}, got {rf.get('image_count')}",
+    )
+    require(
+        rf.get("participant_count") == EXPECTED_TEST_PARTICIPANTS,
+        f"Participant count mismatch: expected {EXPECTED_TEST_PARTICIPANTS}, got {rf.get('participant_count')}",
+    )
+    require(rf.get("model_eval_confirmed") is True, "model_eval_confirmed is not True")
+    require(rf.get("inference_mode_confirmed") is True, "inference_mode_confirmed is not True")
+    require(rf.get("augmentation") is False, "Augmentation was not False")
+    require(rf.get("outcome_labels_present") is False, "Outcome labels were reported present")
+    require(rf.get("metrics_computed") is False, "Metrics were reported computed")
+    require(rf.get("calibration_computed") is False, "Calibration was reported computed")
+    require(rf.get("fusion_computed") is False, "Fusion was reported computed")
+    require("A100" in rf.get("gpu", ""), f"GPU does not contain A100: {rf.get('gpu')}")
+    print(
+        "[PASS] 6. Stage-A run freeze provenance verified (NVIDIA A100, zero outcomes, zero metrics)."
+    )
+
+    # 7. TEST partition census
+    split_manifest = pd.read_parquet(KNEE_SPLIT_PATH)
+    test_knees = split_manifest[split_manifest["split"] == "TEST"]
+    require(
+        len(test_knees) == EXPECTED_TEST_KNEES,
+        f"TEST knee count mismatch: expected {EXPECTED_TEST_KNEES}, got {len(test_knees)}",
+    )
+    require(
+        test_knees["participant_id"].nunique() == EXPECTED_TEST_PARTICIPANTS,
+        f"TEST participant count mismatch: expected {EXPECTED_TEST_PARTICIPANTS}, got {test_knees['participant_id'].nunique()}",
+    )
+    print(
+        f"[PASS] 7. TEST partition census verified: {len(test_knees)} knees across {test_knees['participant_id'].nunique()} participants."
+    )
+
+    # 8, 9, 10. Image prediction keys match TEST split keys, no duplicates, no missing
+    img_df = pd.read_parquet(source_img_preds)
+    require(
+        len(img_df) == EXPECTED_TEST_KNEES,
+        f"Image predictions row count mismatch: expected {EXPECTED_TEST_KNEES}, got {len(img_df)}",
+    )
+    require(
+        not img_df.duplicated(IDENTITY_KEYS).any(),
+        "Duplicate knee keys detected in image predictions",
+    )
+    test_keys_set = set(test_knees[IDENTITY_KEYS].itertuples(index=False, name=None))
+    img_keys_set = set(img_df[IDENTITY_KEYS].itertuples(index=False, name=None))
+    require(
+        img_keys_set == test_keys_set,
+        "Image prediction keys do not match frozen TEST split keys exactly",
+    )
+    require(
+        img_df["p_image"].notna().all(),
+        "Missing/NaN values found in p_image",
+    )
+    require(
+        ((img_df["p_image"] >= 0.0) & (img_df["p_image"] <= 1.0)).all(),
+        "Probabilities out of [0, 1] range in p_image",
+    )
+    print("[PASS] 8. Image prediction keys match frozen TEST keys exactly.")
+    print("[PASS] 9. Zero duplicate keys in image predictions.")
+    print("[PASS] 10. Zero missing or out-of-bound image predictions.")
+
+    # 11 & 12. Fusion weights
+    require(ALPHA_PRIMARY_A == 0.50, "Fusion A alpha must be exactly 0.50")
+    require(ALPHA_SENSITIVITY_B == 0.60, "Fusion B alpha must be exactly 0.60")
+    print(
+        f"[PASS] 11 & 12. Frozen fusion weights verified: Primary Fusion A alpha={ALPHA_PRIMARY_A:.2f}, Sensitivity Fusion B alpha={ALPHA_SENSITIVITY_B:.2f}."
+    )
+
+    # 13 & 14. Bootstrap parameters
+    require(TEST_BOOTSTRAP_SEED == 65027, "Bootstrap seed must be exactly 65027")
+    require(TEST_BOOTSTRAP_REPLICATES == 1000, "Bootstrap replicates must be exactly 1000")
+    print(
+        f"[PASS] 13 & 14. Frozen bootstrap parameters verified: seed={TEST_BOOTSTRAP_SEED}, replicates={TEST_BOOTSTRAP_REPLICATES}, cluster=participant."
+    )
+
+    return {
+        "preflight_audit_passed": True,
+        "dev_hashes": dev_hashes,
+        "log_a_sha": log_a_sha,
+        "log_b_sha": log_b_sha,
+        "archive_sha": archive_sha,
+        "img_pred_sha": img_pred_sha,
+        "rf_sha": rf_sha,
+        "test_knees": len(test_knees),
+        "test_participants": test_knees["participant_id"].nunique(),
+    }
+
+
+def import_stage_a(dest_dir: Path = STAGE_A_CANONICAL_DIR) -> dict:
+    """Import Stage-A return artifacts from Downloads into canonical location with byte-for-byte SHA verification."""
+    print("--- PHASE 3: CONTROLLED STAGE-A IMPORT ---")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    expected_files = {
+        "test_image_predictions.parquet": EXPECTED_IMAGE_PREDS_SHA,
+        "inference_run_freeze.json": EXPECTED_STAGE_A_FREEZE_SHA,
+        "artifact_hashes.json": EXPECTED_STAGE_A_HASHES_SHA,
+        "execution_log.txt": EXPECTED_STAGE_A_LOG_SHA,
+    }
+
+    imported_hashes = {}
+    for filename, expected_sha in expected_files.items():
+        src = DOWNLOADS_STAGE_A_DIR / filename
+        dst = dest_dir / filename
+        require(src.is_file(), f"Source file missing from downloads: {src}")
+
+        src_sha = sha256_file(src)
+        require(
+            src_sha == expected_sha,
+            f"Source SHA mismatch for {filename}: expected {expected_sha}, got {src_sha}",
+        )
+
+        shutil.copyfile(src, dst)
+        dst_sha = sha256_file(dst)
+        require(
+            dst_sha == expected_sha,
+            f"Imported file SHA mismatch for {filename}: expected {expected_sha}, got {dst_sha}",
+        )
+        imported_hashes[filename] = dst_sha
+        print(f"[IMPORTED] {filename} -> {dst} (SHA: {dst_sha})")
+
+    return imported_hashes
+
+
+def generate_test_tabular_predictions(
+    output_dir: Path = DEFAULT_FINAL_TEST_DIR,
+) -> tuple[Path, str]:
+    """Phase 4: Generate frozen tabular TEST predictions using column projection only (zero outcome columns)."""
+    print("--- PHASE 4: FROZEN TABULAR TEST PREDICTIONS (COLUMN PROJECTION ONLY) ---")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Define exact projected columns: 3 identifiers + 15 union predictors
+    union_predictors = list(FEATURE_SETS["formulation_B"])
+    require(len(union_predictors) == 15, f"Expected 15 predictors, got {len(union_predictors)}")
+    require(
+        len(FEATURE_SETS["formulation_A"]) == 14,
+        f"Expected 14 Formulation A predictors, got {len(FEATURE_SETS['formulation_A'])}",
+    )
+
+    projection_cols = IDENTITY_KEYS + union_predictors
+    for term in FORBIDDEN_PREPARE_TERMS:
+        require(term not in projection_cols, f"Forbidden term in projected columns: {term}")
+
+    # 2. Read ONLY the projected columns
+    print(f"[INFO] Reading {len(projection_cols)} projected columns from {FINAL_DATASET_PATH}...")
+    full_df = pd.read_parquet(FINAL_DATASET_PATH, columns=projection_cols)
+
+    # Strictly verify that NO outcome column is in the loaded DataFrame
+    for col in full_df.columns:
+        col_lower = str(col).lower()
+        for term in FORBIDDEN_PREPARE_TERMS:
+            require(term not in col_lower, f"Forbidden outcome column loaded: {col}")
+
+    # 3. Filter to TEST knees using knee_split_manifest
+    split_manifest = pd.read_parquet(KNEE_SPLIT_PATH, columns=IDENTITY_KEYS + ["split"])
+    test_manifest = split_manifest[split_manifest["split"] == "TEST"][IDENTITY_KEYS].copy()
+    require(
+        len(test_manifest) == EXPECTED_TEST_KNEES,
+        f"Expected {EXPECTED_TEST_KNEES} TEST knees, got {len(test_manifest)}",
+    )
+
+    test_df = test_manifest.merge(full_df, on=IDENTITY_KEYS, how="inner")
+    require(
+        len(test_df) == EXPECTED_TEST_KNEES,
+        f"Key merge failed: expected {EXPECTED_TEST_KNEES} rows, got {len(test_df)}",
+    )
+    require(
+        test_df["participant_id"].nunique() == EXPECTED_TEST_PARTICIPANTS,
+        f"Expected {EXPECTED_TEST_PARTICIPANTS} participants, got {test_df['participant_id'].nunique()}",
+    )
+    require(
+        not test_df.duplicated(IDENTITY_KEYS).any(),
+        "Duplicate keys in test features DataFrame",
+    )
+
+    # 4. Load frozen pipelines (NO FITTING)
+    print(f"[INFO] Loading frozen Logistic Formulation A model from {LOGISTIC_A_MODEL_PATH}...")
+    model_a = joblib.load(LOGISTIC_A_MODEL_PATH)
+    print(f"[INFO] Loading frozen Logistic Formulation B model from {LOGISTIC_B_MODEL_PATH}...")
+    model_b = joblib.load(LOGISTIC_B_MODEL_PATH)
+
+    # 5. Predict probabilities (threadpool limited)
+    X_a = test_df[list(FEATURE_SETS["formulation_A"])].copy()
+    X_b = test_df[list(FEATURE_SETS["formulation_B"])].copy()
+
+    with threadpool_limits(limits=1):
+        p_a = model_a.predict_proba(X_a)[:, 1]
+        p_b = model_b.predict_proba(X_b)[:, 1]
+
+    # Validate output properties
+    for name, probs in [("p_logistic_A", p_a), ("p_logistic_B", p_b)]:
+        require(len(probs) == EXPECTED_TEST_KNEES, f"Length mismatch for {name}")
+        require(np.isfinite(probs).all(), f"Non-finite probabilities in {name}")
+        require(
+            ((probs >= 0.0) & (probs <= 1.0)).all(),
+            f"Probabilities outside [0, 1] in {name}",
+        )
+
+    # 6. Save test tabular predictions
+    tab_preds_df = pd.DataFrame(
+        {
+            "participant_id": test_df["participant_id"].astype(str),
+            "knee_side_code": test_df["knee_side_code"].astype(str),
+            "baseline_visit": test_df["baseline_visit"].astype(str),
+            "p_logistic_A": p_a,
+            "p_logistic_B": p_b,
+        }
+    )
+
+    out_path = output_dir / "test_tabular_predictions.parquet"
+    tab_preds_df.to_parquet(out_path, index=False)
+    preds_sha = sha256_file(out_path)
+    print(f"[SUCCESS] Wrote test tabular predictions to {out_path} (SHA: {preds_sha})")
+    print(
+        f"[INFO] Logistic A Range: min={p_a.min():.6f}, max={p_a.max():.6f}, mean={p_a.mean():.6f}"
+    )
+    print(
+        f"[INFO] Logistic B Range: min={p_b.min():.6f}, max={p_b.max():.6f}, mean={p_b.mean():.6f}"
+    )
+
+    return out_path, preds_sha
+
+
+def prepare_final_test(output_dir: Path = DEFAULT_FINAL_TEST_DIR) -> dict:
+    """Phase A: PREPARE execution.
+
+    Verifies preflight prerequisites, imports Stage-A byte-for-byte, generates tabular
+    predictions via column projection, verifies key alignment without outcomes,
+    and freezes pre_score_freeze.json.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    this_file = Path(__file__).resolve()
+    scoring_code_sha = sha256_file(this_file)
+
+    # 1. Preflight audit
+    audit_res = run_preflight_audit()
+
+    # 2. Controlled Stage-A import
+    _ = import_stage_a(STAGE_A_CANONICAL_DIR)
+
+    # 3. Tabular TEST prediction generation (projection only, 0 outcomes)
+    tab_preds_path, tab_preds_sha = generate_test_tabular_predictions(output_dir)
+
+    # 4. Key alignment verification between image and tabular predictions (without outcome)
+    img_preds_path = STAGE_A_CANONICAL_DIR / "test_image_predictions.parquet"
+    img_df = pd.read_parquet(img_preds_path)
+    tab_df = pd.read_parquet(tab_preds_path)
+
+    require(
+        len(img_df) == EXPECTED_TEST_KNEES and len(tab_df) == EXPECTED_TEST_KNEES,
+        "Row count mismatch between image and tabular predictions",
+    )
+    for col in IDENTITY_KEYS:
+        require(
+            img_df[col].astype(str).equals(tab_df[col].astype(str)),
+            f"Key sequence misalignment between image and tabular predictions on {col}",
+        )
+    img_keys = set(img_df[IDENTITY_KEYS].itertuples(index=False, name=None))
+    tab_keys = set(tab_df[IDENTITY_KEYS].itertuples(index=False, name=None))
+    require(img_keys == tab_keys, "Key set mismatch between image and tabular predictions")
+    print(
+        "[PASS] Key alignment audit: exact 1,044:1,044 sequence and set match between image and tabular predictions."
+    )
+
+    # 5. Create pre_score_freeze.json BEFORE outcome access
+    freeze_data = {
+        "status": "FROZEN_BEFORE_TEST_OUTCOME_ACCESS",
+        "timestamp_utc": datetime.now(UTC).isoformat(),
+        "scoring_code_file": "src/modeling/final_test_evaluation.py",
+        "scoring_code_sha256": scoring_code_sha,
+        "scoring_config_file": None,
+        "scoring_config_sha256": None,
+        "final_model_freeze_sha256": sha256_file(
+            Path("data/processed/modeling/final_freeze/v1/final_model_freeze.json")
+        ),
+        "test_evaluation_protocol_sha256": sha256_file(
+            Path("data/processed/modeling/final_freeze/v1/test_evaluation_protocol.json")
+        ),
+        "tabular_logistic_A_model_sha256": audit_res["log_a_sha"],
+        "tabular_logistic_B_model_sha256": audit_res["log_b_sha"],
+        "stage_a_return_archive_sha256": audit_res["archive_sha"],
+        "stage_a_image_predictions_sha256": audit_res["img_pred_sha"],
+        "stage_a_inference_run_freeze_sha256": audit_res["rf_sha"],
+        "test_tabular_predictions_sha256": tab_preds_sha,
+        "alpha_A": ALPHA_PRIMARY_A,
+        "alpha_B": ALPHA_SENSITIVITY_B,
+        "bootstrap_seed": TEST_BOOTSTRAP_SEED,
+        "bootstrap_replicates": TEST_BOOTSTRAP_REPLICATES,
+        "primary_models": [
+            "logistic__formulation_A",
+            "DenseNet121_selected",
+            "multimodal_fusion_A_selected",
+        ],
+        "sensitivity_models": [
+            "logistic__formulation_B",
+            "multimodal_fusion_B_selected",
+        ],
+        "paired_comparisons": [
+            "fusion_A_minus_densenet121",
+            "fusion_A_minus_logistic_A",
+        ],
+        "primary_metrics": [
+            "AUROC",
+            "AUPRC",
+            "Brier",
+            "log_loss",
+            "calibration_intercept",
+            "calibration_slope",
+        ],
+        "test_observations": EXPECTED_TEST_KNEES,
+        "test_participants": EXPECTED_TEST_PARTICIPANTS,
+        "test_outcome_accessed": False,
+    }
+
+    freeze_path = output_dir / "pre_score_freeze.json"
+    freeze_path.write_text(json.dumps(freeze_data, indent=2), encoding="utf-8")
+    freeze_sha = sha256_file(freeze_path)
+    print(f"[SUCCESS] Pre-score freeze written to {freeze_path} (SHA: {freeze_sha})")
+
+    # Re-verify scoring code SHA immediately
+    recomputed_sha = sha256_file(this_file)
+    require(
+        recomputed_sha == scoring_code_sha,
+        "Scoring code SHA mutated during preparation!",
+    )
+    print(f"[VERIFIED] Scoring code SHA immutable: {scoring_code_sha}")
+
+    print("=" * 70)
+    print("FINAL TEST PREPARATION FROZEN — TEST OUTCOME STILL UNOPENED")
+    print("=" * 70)
+
+    return {
+        "status": "FINAL_TEST_PREPARATION_FROZEN",
+        "scoring_code_sha256": scoring_code_sha,
+        "pre_score_freeze_path": str(freeze_path),
+        "pre_score_freeze_sha256": freeze_sha,
+        "test_tabular_predictions_sha256": tab_preds_sha,
+        "test_image_predictions_sha256": audit_res["img_pred_sha"],
+        "test_outcome_accessed": False,
+    }
+
+
+def compute_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict:
+    """Compute standard metrics using exact project definitions."""
+    cal = tabular.calibration(y_true, y_prob)
+    return {
+        "observations": len(y_true),
+        "positive_events": int(y_true.sum()),
+        "prevalence": float(y_true.mean()),
+        "AUROC": float(roc_auc_score(y_true, y_prob)),
+        "AUPRC": float(average_precision_score(y_true, y_prob)),
+        "Brier": float(brier_score_loss(y_true, y_prob)),
+        "log_loss": float(log_loss(y_true, y_prob)),
+        "calibration_intercept": cal["intercept"],
+        "calibration_slope": cal["slope"],
+        "calibration_status": cal["status"],
+    }
+
+
+def score_final_test(output_dir: Path = DEFAULT_FINAL_TEST_DIR) -> dict:
+    """Phase B: SCORE execution.
+
+    One-time final scoring of frozen models on held-out TEST outcomes.
+    Must only be called after prepare has frozen pre_score_freeze.json.
+    """
+    freeze_path = output_dir / "pre_score_freeze.json"
+    require(
+        freeze_path.is_file(),
+        f"Missing pre_score_freeze.json at {freeze_path}. Run prepare first.",
+    )
+
+    # 1. Verify pre_score_freeze and assert scoring code has NOT mutated
+    freeze_data = json.loads(freeze_path.read_text(encoding="utf-8"))
+    this_file = Path(__file__).resolve()
+    current_code_sha = sha256_file(this_file)
+    require(
+        current_code_sha == freeze_data["scoring_code_sha256"],
+        f"Scoring code SHA drifted: expected {freeze_data['scoring_code_sha256']}, got {current_code_sha}",
+    )
+
+    # Verify input prediction SHAs
+    img_preds_path = STAGE_A_CANONICAL_DIR / "test_image_predictions.parquet"
+    tab_preds_path = output_dir / "test_tabular_predictions.parquet"
+    require(
+        sha256_file(img_preds_path) == freeze_data["stage_a_image_predictions_sha256"],
+        "Image predictions SHA changed since prepare",
+    )
+    require(
+        sha256_file(tab_preds_path) == freeze_data["test_tabular_predictions_sha256"],
+        "Tabular predictions SHA changed since prepare",
+    )
+
+    # Refuse to re-score if already finalized
+    run_freeze_path = output_dir / "run_freeze.json"
+    if run_freeze_path.is_file():
+        existing_rf = json.loads(run_freeze_path.read_text(encoding="utf-8"))
+        if existing_rf.get("status") == "COMPLETED_FINAL_TEST_EVALUATION":
+            print(
+                "[NOTICE] Final test evaluation already completed. Re-scoring forbidden by protocol."
+            )
+            return existing_rf
+
+    print("--- PHASE B: ONE-TIME FINAL TEST SCORING ---")
+
+    # 2. Load single authoritative primary outcome: composite_progression
+    print(f"[INFO] Accessing authoritative primary outcome from {FINAL_DATASET_PATH}...")
+    target_df = pd.read_parquet(
+        FINAL_DATASET_PATH,
+        columns=IDENTITY_KEYS + ["composite_progression"],
+    )
+
+    img_df = pd.read_parquet(img_preds_path)
+    tab_df = pd.read_parquet(tab_preds_path)
+
+    # 3. Strict tripartite key alignment
+    aligned = img_df[IDENTITY_KEYS + ["p_image"]].merge(
+        tab_df[IDENTITY_KEYS + ["p_logistic_A", "p_logistic_B"]],
+        on=IDENTITY_KEYS,
+        how="inner",
+    )
+    aligned = aligned.merge(
+        target_df[IDENTITY_KEYS + ["composite_progression"]],
+        on=IDENTITY_KEYS,
+        how="inner",
+    )
+
+    require(
+        len(aligned) == EXPECTED_TEST_KNEES,
+        f"Aligned TEST rows mismatch: expected {EXPECTED_TEST_KNEES}, got {len(aligned)}",
+    )
+    require(
+        aligned["participant_id"].nunique() == EXPECTED_TEST_PARTICIPANTS,
+        f"Aligned participants mismatch: expected {EXPECTED_TEST_PARTICIPANTS}, got {aligned['participant_id'].nunique()}",
+    )
+    require(not aligned.duplicated(IDENTITY_KEYS).any(), "Duplicate keys in aligned DataFrame")
+    require(aligned["composite_progression"].notna().all(), "Missing target values in TEST")
+
+    y_test = aligned["composite_progression"].astype(int).to_numpy()
+    p_image = aligned["p_image"].to_numpy(dtype=float)
+    p_tab_a = aligned["p_logistic_A"].to_numpy(dtype=float)
+    p_tab_b = aligned["p_logistic_B"].to_numpy(dtype=float)
+
+    # 4. Compute frozen fusions
+    p_fusion_a = ALPHA_PRIMARY_A * p_image + (1.0 - ALPHA_PRIMARY_A) * p_tab_a
+    p_fusion_b = ALPHA_SENSITIVITY_B * p_image + (1.0 - ALPHA_SENSITIVITY_B) * p_tab_b
+
+    aligned["p_fusion_A"] = p_fusion_a
+    aligned["p_fusion_B"] = p_fusion_b
+
+    aligned_preds_path = output_dir / "aligned_test_predictions.parquet"
+    aligned.to_parquet(aligned_preds_path, index=False)
+    aligned_sha = sha256_file(aligned_preds_path)
+
+    # 5. Reveal event census
+    n_events = int(y_test.sum())
+    prevalence = float(y_test.mean())
+    print("=" * 70)
+    print("REVEALED TEST COHORT CENSUS:")
+    print(f"Total TEST Knees:       {len(aligned)}")
+    print(f"Total Participants:     {aligned['participant_id'].nunique()}")
+    print(f"Total Positive Events:  {n_events}")
+    print(f"Event Prevalence:       {prevalence:.4f} ({prevalence * 100:.2f}%)")
+    print("=" * 70)
+
+    # 6. Compute primary & sensitivity test metrics
+    metrics = {
+        "primary": {
+            "logistic__formulation_A": compute_metrics(y_test, p_tab_a),
+            "DenseNet121_selected": compute_metrics(y_test, p_image),
+            "multimodal_fusion_A_selected": compute_metrics(y_test, p_fusion_a),
+        },
+        "sensitivity": {
+            "logistic__formulation_B": compute_metrics(y_test, p_tab_b),
+            "multimodal_fusion_B_selected": compute_metrics(y_test, p_fusion_b),
+        },
+    }
+
+    # 7. Participant-clustered bootstrap
+    print(
+        f"[INFO] Running {TEST_BOOTSTRAP_REPLICATES} participant-clustered bootstrap replicates (seed={TEST_BOOTSTRAP_SEED})..."
+    )
+    participants = aligned["participant_id"].to_numpy()
+    unique_participants = sorted(set(participants))
+    cluster_map = {pid: np.flatnonzero(participants == pid) for pid in unique_participants}
+    groups = [cluster_map[pid] for pid in unique_participants]
+
+    rng = np.random.default_rng(TEST_BOOTSTRAP_SEED)
+    sample_hash = hashlib.sha256()
+
+    all_models = {
+        "logistic__formulation_A": p_tab_a,
+        "DenseNet121_selected": p_image,
+        "multimodal_fusion_A_selected": p_fusion_a,
+        "logistic__formulation_B": p_tab_b,
+        "multimodal_fusion_B_selected": p_fusion_b,
+    }
+
+    boot_records = []
+    diff_records = {
+        "fusion_minus_image": {"AUROC": [], "AUPRC": [], "Brier": []},
+        "fusion_minus_logistic_A": {"AUROC": [], "AUPRC": [], "Brier": []},
+    }
+
+    for rep in range(TEST_BOOTSTRAP_REPLICATES):
+        sampled = rng.integers(len(groups), size=len(groups))
+        idx = np.concatenate([groups[i] for i in sampled])
+        sample_hash.update(idx.astype("<i8").tobytes())
+
+        y_b = y_test[idx]
+        valid_classes = np.unique(y_b).size == 2
+
+        rep_m = {}
+        for m_name, p_arr in all_models.items():
+            p_b = p_arr[idx]
+            auc = float(roc_auc_score(y_b, p_b)) if valid_classes else np.nan
+            ap = float(average_precision_score(y_b, p_b)) if valid_classes else np.nan
+            brier = float(np.mean((y_b - p_b) ** 2))
+            rep_m[m_name] = {"AUROC": auc, "AUPRC": ap, "Brier": brier}
+            boot_records.append(
+                {
+                    "model_id": m_name,
+                    "replicate": rep,
+                    "AUROC": auc,
+                    "AUPRC": ap,
+                    "Brier": brier,
+                }
+            )
+
+        if valid_classes:
+            f_a = rep_m["multimodal_fusion_A_selected"]
+            img = rep_m["DenseNet121_selected"]
+            tab = rep_m["logistic__formulation_A"]
+            for metric_k in ("AUROC", "AUPRC", "Brier"):
+                diff_records["fusion_minus_image"][metric_k].append(f_a[metric_k] - img[metric_k])
+                diff_records["fusion_minus_logistic_A"][metric_k].append(
+                    f_a[metric_k] - tab[metric_k]
+                )
+
+    boot_df = pd.DataFrame(boot_records)
+    intervals = {}
+    for m_name, grp in boot_df.groupby("model_id"):
+        intervals[m_name] = {
+            metric_k: {
+                "lower": float(grp[metric_k].dropna().quantile(0.025)),
+                "upper": float(grp[metric_k].dropna().quantile(0.975)),
+                "valid_replicates": int(grp[metric_k].notna().sum()),
+            }
+            for metric_k in ("AUROC", "AUPRC", "Brier")
+        }
+
+    clustered_bootstrap_out = {
+        "replicates": TEST_BOOTSTRAP_REPLICATES,
+        "seed": TEST_BOOTSTRAP_SEED,
+        "unit": "participant",
+        "sample_indices_sha256": sample_hash.hexdigest(),
+        "confidence_level": 0.95,
+        "method": "percentile; conditional on fitted development models and frozen fusion weights",
+        "intervals": intervals,
+    }
+
+    # 8. Paired comparative intervals
+    paired_differences_out = {
+        "replicates": TEST_BOOTSTRAP_REPLICATES,
+        "seed": TEST_BOOTSTRAP_SEED,
+        "unit": "participant",
+        "confidence_level": 0.95,
+        "method": "percentile; conditional on fitted development models and frozen fusion weights",
+        "comparisons": {
+            "fusion_minus_image": {
+                metric_k: {
+                    "observed": float(
+                        metrics["primary"]["multimodal_fusion_A_selected"][metric_k]
+                        - metrics["primary"]["DenseNet121_selected"][metric_k]
+                    ),
+                    "median": float(np.median(diff_records["fusion_minus_image"][metric_k])),
+                    "lower": float(
+                        np.quantile(diff_records["fusion_minus_image"][metric_k], 0.025)
+                    ),
+                    "upper": float(
+                        np.quantile(diff_records["fusion_minus_image"][metric_k], 0.975)
+                    ),
+                    "valid_replicates": len(diff_records["fusion_minus_image"][metric_k]),
+                }
+                for metric_k in ("AUROC", "AUPRC", "Brier")
+            },
+            "fusion_minus_logistic_A": {
+                metric_k: {
+                    "observed": float(
+                        metrics["primary"]["multimodal_fusion_A_selected"][metric_k]
+                        - metrics["primary"]["logistic__formulation_A"][metric_k]
+                    ),
+                    "median": float(np.median(diff_records["fusion_minus_logistic_A"][metric_k])),
+                    "lower": float(
+                        np.quantile(diff_records["fusion_minus_logistic_A"][metric_k], 0.025)
+                    ),
+                    "upper": float(
+                        np.quantile(diff_records["fusion_minus_logistic_A"][metric_k], 0.975)
+                    ),
+                    "valid_replicates": len(diff_records["fusion_minus_logistic_A"][metric_k]),
+                }
+                for metric_k in ("AUROC", "AUPRC", "Brier")
+            },
+        },
+        "note": "Descriptive empirical bootstrap distributions; not converted to claims of statistical significance.",
+    }
+
+    # 9. Calibration curves & curve coordinate data
+    prob_true_f, prob_pred_f = calibration_curve(y_test, p_fusion_a, n_bins=10, strategy="quantile")
+    prob_true_i, prob_pred_i = calibration_curve(y_test, p_image, n_bins=10, strategy="quantile")
+    prob_true_t, prob_pred_t = calibration_curve(y_test, p_tab_a, n_bins=10, strategy="quantile")
+
+    cal_data = {
+        "partition": "TEST",
+        "recalibration_applied": False,
+        "note": "Joint unpenalized test diagnostic; never applied to alter predictions.",
+        "multimodal_fusion_A_selected": {
+            "alpha": ALPHA_PRIMARY_A,
+            "mean_predicted_probability": prob_pred_f.tolist(),
+            "observed_event_fraction": prob_true_f.tolist(),
+            "calibration_intercept": metrics["primary"]["multimodal_fusion_A_selected"][
+                "calibration_intercept"
+            ],
+            "calibration_slope": metrics["primary"]["multimodal_fusion_A_selected"][
+                "calibration_slope"
+            ],
+        },
+        "unimodal_image_DenseNet121": {
+            "mean_predicted_probability": prob_pred_i.tolist(),
+            "observed_event_fraction": prob_true_i.tolist(),
+            "calibration_intercept": metrics["primary"]["DenseNet121_selected"][
+                "calibration_intercept"
+            ],
+            "calibration_slope": metrics["primary"]["DenseNet121_selected"]["calibration_slope"],
+        },
+        "unimodal_tabular_logistic_A": {
+            "mean_predicted_probability": prob_pred_t.tolist(),
+            "observed_event_fraction": prob_true_t.tolist(),
+            "calibration_intercept": metrics["primary"]["logistic__formulation_A"][
+                "calibration_intercept"
+            ],
+            "calibration_slope": metrics["primary"]["logistic__formulation_A"]["calibration_slope"],
+        },
+    }
+
+    # ROC curve data
+    fpr_f, tpr_f, _ = roc_curve(y_test, p_fusion_a)
+    fpr_i, tpr_i, _ = roc_curve(y_test, p_image)
+    fpr_t, tpr_t, _ = roc_curve(y_test, p_tab_a)
+    roc_curve_data = {
+        "multimodal_fusion_A": {"fpr": fpr_f.tolist(), "tpr": tpr_f.tolist()},
+        "DenseNet121": {"fpr": fpr_i.tolist(), "tpr": tpr_i.tolist()},
+        "logistic_A": {"fpr": fpr_t.tolist(), "tpr": tpr_t.tolist()},
+    }
+
+    # PR curve data
+    prec_f, rec_f, _ = precision_recall_curve(y_test, p_fusion_a)
+    prec_i, rec_i, _ = precision_recall_curve(y_test, p_image)
+    prec_t, rec_t, _ = precision_recall_curve(y_test, p_tab_a)
+    pr_curve_data = {
+        "multimodal_fusion_A": {"precision": prec_f.tolist(), "recall": rec_f.tolist()},
+        "DenseNet121": {"precision": prec_i.tolist(), "recall": rec_i.tolist()},
+        "logistic_A": {"precision": prec_t.tolist(), "recall": rec_t.tolist()},
+    }
+
+    # 10. Generate publication-quality plots
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # ROC plot
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.plot([0, 1], [0, 1], "--", color="gray", label="Chance (AUROC = 0.500)")
+    ax.plot(
+        fpr_f,
+        tpr_f,
+        color="#1f77b4",
+        linewidth=2,
+        label=f"Multimodal Fusion A (AUROC = {metrics['primary']['multimodal_fusion_A_selected']['AUROC']:.3f})",
+    )
+    ax.plot(
+        fpr_i,
+        tpr_i,
+        color="#ff7f0e",
+        linewidth=2,
+        label=f"DenseNet121 (AUROC = {metrics['primary']['DenseNet121_selected']['AUROC']:.3f})",
+    )
+    ax.plot(
+        fpr_t,
+        tpr_t,
+        color="#2ca02c",
+        linewidth=2,
+        label=f"Logistic A (AUROC = {metrics['primary']['logistic__formulation_A']['AUROC']:.3f})",
+    )
+    ax.set_xlabel("1 - Specificity (False Positive Rate)")
+    ax.set_ylabel("Sensitivity (True Positive Rate)")
+    ax.set_title("TEST Receiver Operating Characteristic (ROC)")
+    ax.legend(loc="lower right")
+    ax.grid(True, alpha=0.3)
+    roc_plot_path = output_dir / "roc_curve.png"
+    fig.savefig(roc_plot_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    # PR plot
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.axhline(
+        y=prevalence,
+        color="gray",
+        linestyle="--",
+        label=f"No Skill (Prevalence = {prevalence:.3f})",
+    )
+    ax.plot(
+        rec_f,
+        prec_f,
+        color="#1f77b4",
+        linewidth=2,
+        label=f"Multimodal Fusion A (AUPRC = {metrics['primary']['multimodal_fusion_A_selected']['AUPRC']:.3f})",
+    )
+    ax.plot(
+        rec_i,
+        prec_i,
+        color="#ff7f0e",
+        linewidth=2,
+        label=f"DenseNet121 (AUPRC = {metrics['primary']['DenseNet121_selected']['AUPRC']:.3f})",
+    )
+    ax.plot(
+        rec_t,
+        prec_t,
+        color="#2ca02c",
+        linewidth=2,
+        label=f"Logistic A (AUPRC = {metrics['primary']['logistic__formulation_A']['AUPRC']:.3f})",
+    )
+    ax.set_xlabel("Recall (Sensitivity)")
+    ax.set_ylabel("Precision (Positive Predictive Value)")
+    ax.set_title("TEST Precision-Recall Curve")
+    ax.legend(loc="upper right")
+    ax.grid(True, alpha=0.3)
+    pr_plot_path = output_dir / "precision_recall_curve.png"
+    fig.savefig(pr_plot_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    # Calibration plot
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.plot([0, 1], [0, 1], "--", color="gray", label="Perfect Calibration")
+    ax.plot(
+        prob_pred_f,
+        prob_true_f,
+        "s-",
+        color="#1f77b4",
+        linewidth=2,
+        label="Multimodal Fusion A",
+    )
+    ax.plot(
+        prob_pred_i,
+        prob_true_i,
+        "o-",
+        color="#ff7f0e",
+        linewidth=2,
+        label="DenseNet121",
+    )
+    ax.plot(
+        prob_pred_t,
+        prob_true_t,
+        "^-",
+        color="#2ca02c",
+        linewidth=2,
+        label="Logistic A",
+    )
+    ax.set_xlabel("Mean Predicted Probability (Quantile Bins)")
+    ax.set_ylabel("Observed Progression Fraction")
+    ax.set_title("TEST Quantile Calibration Plot")
+    ax.legend(loc="lower right")
+    ax.grid(True, alpha=0.3)
+    cal_plot_path = output_dir / "calibration_curve.png"
+    fig.savefig(cal_plot_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    # 11. Validation vs TEST Generalization Summary
+    val_model_freeze = json.loads(
+        Path("data/processed/modeling/final_freeze/v1/final_model_freeze.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    val_prim = val_model_freeze["primary_models"]
+    val_sens = val_model_freeze["sensitivity_models"]
+
+    def make_gen_row(model_label, val_m, test_m):
+        return {
+            "model": model_label,
+            "val_AUROC": val_m["AUROC"],
+            "test_AUROC": test_m["AUROC"],
+            "diff_AUROC": test_m["AUROC"] - val_m["AUROC"],
+            "val_AUPRC": val_m["AUPRC"],
+            "test_AUPRC": test_m["AUPRC"],
+            "diff_AUPRC": test_m["AUPRC"] - val_m["AUPRC"],
+            "val_Brier": val_m["Brier"],
+            "test_Brier": test_m["Brier"],
+            "diff_Brier": test_m["Brier"] - val_m["Brier"],
+        }
+
+    gen_summary = [
+        make_gen_row(
+            "Logistic A (Primary Tabular)",
+            val_prim["primary_tabular"]["validation_metrics"],
+            metrics["primary"]["logistic__formulation_A"],
+        ),
+        make_gen_row(
+            "DenseNet121 (Primary Image)",
+            val_prim["primary_image"]["validation_metrics"],
+            metrics["primary"]["DenseNet121_selected"],
+        ),
+        make_gen_row(
+            "Multimodal Fusion A (Primary)",
+            val_prim["primary_multimodal"]["validation_metrics"],
+            metrics["primary"]["multimodal_fusion_A_selected"],
+        ),
+        make_gen_row(
+            "Logistic B (Sensitivity Tabular)",
+            val_sens["sensitivity_tabular"]["validation_metrics"],
+            metrics["sensitivity"]["logistic__formulation_B"],
+        ),
+        make_gen_row(
+            "Multimodal Fusion B (Sensitivity)",
+            val_sens["sensitivity_multimodal"]["validation_metrics"],
+            metrics["sensitivity"]["multimodal_fusion_B_selected"],
+        ),
+    ]
+
+    # 12. Save all output artifacts
+    (output_dir / "test_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (output_dir / "clustered_bootstrap.json").write_text(
+        json.dumps(clustered_bootstrap_out, indent=2), encoding="utf-8"
+    )
+    (output_dir / "paired_bootstrap_differences.json").write_text(
+        json.dumps(paired_differences_out, indent=2), encoding="utf-8"
+    )
+    (output_dir / "calibration_data.json").write_text(
+        json.dumps(cal_data, indent=2), encoding="utf-8"
+    )
+    (output_dir / "roc_curve_data.json").write_text(
+        json.dumps(roc_curve_data, indent=2), encoding="utf-8"
+    )
+    (output_dir / "precision_recall_curve_data.json").write_text(
+        json.dumps(pr_curve_data, indent=2), encoding="utf-8"
+    )
+    (output_dir / "validation_vs_test_summary.json").write_text(
+        json.dumps(gen_summary, indent=2), encoding="utf-8"
+    )
+
+    # Compile artifact hashes
+    final_artifacts = [
+        "test_tabular_predictions.parquet",
+        "aligned_test_predictions.parquet",
+        "test_metrics.json",
+        "clustered_bootstrap.json",
+        "paired_bootstrap_differences.json",
+        "calibration_data.json",
+        "roc_curve_data.json",
+        "precision_recall_curve_data.json",
+        "validation_vs_test_summary.json",
+        "roc_curve.png",
+        "precision_recall_curve.png",
+        "calibration_curve.png",
+        "pre_score_freeze.json",
+    ]
+    artifact_hashes = {f: sha256_file(output_dir / f) for f in final_artifacts}
+    (output_dir / "artifact_hashes.json").write_text(
+        json.dumps(artifact_hashes, indent=2), encoding="utf-8"
+    )
+
+    # 13. Complete run freeze
+    run_freeze = {
+        "status": "COMPLETED_FINAL_TEST_EVALUATION",
+        "timestamp_utc": datetime.now(UTC).isoformat(),
+        "scoring_code_file": "src/modeling/final_test_evaluation.py",
+        "scoring_code_sha256": current_code_sha,
+        "pre_score_freeze_sha256": sha256_file(freeze_path),
+        "final_dataset_sha256": sha256_file(FINAL_DATASET_PATH),
+        "knee_split_sha256": sha256_file(KNEE_SPLIT_PATH),
+        "participant_split_sha256": sha256_file(PARTICIPANT_SPLIT_PATH),
+        "stage_a_image_predictions_sha256": sha256_file(img_preds_path),
+        "test_tabular_predictions_sha256": sha256_file(tab_preds_path),
+        "aligned_test_predictions_sha256": aligned_sha,
+        "alpha_primary_A": ALPHA_PRIMARY_A,
+        "alpha_sensitivity_B": ALPHA_SENSITIVITY_B,
+        "bootstrap_seed": TEST_BOOTSTRAP_SEED,
+        "bootstrap_replicates": TEST_BOOTSTRAP_REPLICATES,
+        "test_observations": EXPECTED_TEST_KNEES,
+        "test_participants": EXPECTED_TEST_PARTICIPANTS,
+        "test_positive_events": n_events,
+        "test_prevalence": prevalence,
+        "test_outcome_accessed": True,
+        "primary_results": {
+            "logistic_A_AUROC": metrics["primary"]["logistic__formulation_A"]["AUROC"],
+            "image_AUROC": metrics["primary"]["DenseNet121_selected"]["AUROC"],
+            "fusion_A_AUROC": metrics["primary"]["multimodal_fusion_A_selected"]["AUROC"],
+            "logistic_A_AUPRC": metrics["primary"]["logistic__formulation_A"]["AUPRC"],
+            "image_AUPRC": metrics["primary"]["DenseNet121_selected"]["AUPRC"],
+            "fusion_A_AUPRC": metrics["primary"]["multimodal_fusion_A_selected"]["AUPRC"],
+            "logistic_A_Brier": metrics["primary"]["logistic__formulation_A"]["Brier"],
+            "image_Brier": metrics["primary"]["DenseNet121_selected"]["Brier"],
+            "fusion_A_Brier": metrics["primary"]["multimodal_fusion_A_selected"]["Brier"],
+        },
+    }
+    (output_dir / "run_freeze.json").write_text(json.dumps(run_freeze, indent=2), encoding="utf-8")
+
+    print("=" * 70)
+    print("MILESTONE 6G-B COMPLETE — FINAL HELD-OUT TEST EVALUATION FROZEN")
+    print("=" * 70)
+
+    return run_freeze
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Milestone 6G-B: One-Time Coordinated TEST Evaluation"
+    )
+    parser.add_argument(
+        "action",
+        choices=["prepare", "score"],
+        help="Action to execute: 'prepare' (pre-score freeze, 0 outcomes) or 'score' (one-time scoring)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_FINAL_TEST_DIR,
+        help="Output directory for final test artifacts",
+    )
+    args = parser.parse_args()
+
+    if args.action == "prepare":
+        prepare_final_test(args.output_dir)
+    elif args.action == "score":
+        score_final_test(args.output_dir)
+
+
+if __name__ == "__main__":
+    main()

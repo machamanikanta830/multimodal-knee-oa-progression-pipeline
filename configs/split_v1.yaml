@@ -1,0 +1,19 @@
+{
+  "split_version": "participant_grouped_split_v1",
+  "algorithm_version": "sha256_stratified_controlled_rounding_search_v1",
+  "seed": "oai-final-multimodal-participant-split-v1",
+  "split_names": ["TRAIN", "VALIDATION", "TEST"],
+  "proportion_weights": [70, 15, 15],
+  "candidate_count": 256,
+  "minimum_stratum_participants": 20,
+  "sparse_strata_policy": ["eligible_knees_and_event_knees", "eligible_knees_and_any_event", "any_event", "all_participants"],
+  "selection_columns": ["participant_id", "knee_side_code", "composite_progression"],
+  "objective": ["participant_overlap_hard_failure", "participant_share_max_then_sum_absolute_error", "knee_share_max_then_sum_absolute_error", "primary_prevalence_max_then_sum_absolute_error", "primary_event_share_max_then_sum_absolute_error", "one_two_knee_participant_share_max_then_sum_absolute_error", "lowest_candidate_index_tie_break"],
+  "audit_material_imbalance_thresholds": {
+    "participant_share_absolute_difference": 0.001,
+    "knee_share_absolute_difference": 0.005,
+    "primary_prevalence_absolute_difference": 0.02,
+    "primary_event_share_absolute_difference": 0.02,
+    "one_two_knee_participant_share_absolute_difference": 0.03
+  }
+}

@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multimodal-knee-oa-progression"
+version = "0.1.0"
+description = "Reproducible OAI multimodal knee osteoarthritis progression research pipeline"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.13,<3.14"
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "numpy>=1.26",
+    "openpyxl>=3.1",
+    "pandas>=2.1",
+    "Pillow>=10",
+    "pyarrow>=14",
+    "pydicom>=2.4",
+]
+
+[project.optional-dependencies]
+image_modeling = [
+    "torch==2.14.0",
+    "torchvision==0.29.0",
+]
+modeling = [
+    "scikit-learn==1.9.1",
+    "catboost==1.2.10",
+    "scipy==1.18.1",
+    "matplotlib==3.11.2",
+    "joblib==1.6.0",
+    "threadpoolctl==3.7.0",
+]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+oai-data-inventory = "data.inventory:main"
+oai-build-cohort = "cohort.builder:main"
+oai-materialize-cohort = "cohort.materialize:main"
+oai-inspect-dicoms = "imaging.dicom_inspect:main"
+oai-prepare-image-pilot = "imaging.pilot_qc:main"
+oai-preprocess-image-pilot = "imaging.pilot_preprocessing:main"
+oai-prepare-image-validation = "imaging.validation_sample:main"
+oai-run-image-validation = "imaging.independent_validation:main"
+oai-prepare-full-image-acquisition = "imaging.full_acquisition:main"
+oai-preprocess-full-images = "imaging.full_preprocessing:main"
+oai-reprocess-full-images-v3 = "imaging.frozen_full_v3:main"
+oai-review-v3-crops = "imaging.v3_review_ui:main"
+oai-regenerate-v3-override-crops = "imaging.override_crops:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+    "public_portable: Synthetic self-contained tests executable in fresh public clone without private data or artifacts",
+    "local_research_state: Tests requiring local research artifacts, data/processed, or private models",
+    "historical_lifecycle: Tests asserting pre-TEST lifecycle conditions superseded after final evaluation",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["B", "E4", "E7", "E9", "F", "I", "UP"]
+ignore = ["UP042"]
+

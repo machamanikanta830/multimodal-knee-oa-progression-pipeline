@@ -1,0 +1,34 @@
+{
+  "partition": "TEST",
+  "recalibration_applied": false,
+  "note": "Joint unpenalized test diagnostic; never applied to alter predictions.",
+  "multimodal_fusion_A_selected": {
+    "alpha": 0.5,
+    "calibration_intercept": 0.6561,
+    "calibration_slope": 1.3184,
+    "status": "converged"
+  },
+  "unimodal_image_DenseNet121": {
+    "calibration_intercept": -0.0351,
+    "calibration_slope": 0.8035,
+    "status": "converged"
+  },
+  "unimodal_tabular_logistic_A": {
+    "calibration_intercept": -0.0446,
+    "calibration_slope": 0.9869,
+    "status": "converged"
+  },
+  "sensitivity_tabular_logistic_B": {
+    "role": "BASELINE-KL SENSITIVITY",
+    "calibration_intercept": 0.2871,
+    "calibration_slope": 1.1878,
+    "status": "converged"
+  },
+  "sensitivity_multimodal_fusion_B": {
+    "role": "BASELINE-KL SENSITIVITY",
+    "alpha": 0.6,
+    "calibration_intercept": 0.402,
+    "calibration_slope": 1.1409,
+    "status": "converged"
+  }
+}

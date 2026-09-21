@@ -1,0 +1,56 @@
+{
+  "replicates": 1000,
+  "seed": 65027,
+  "unit": "participant",
+  "confidence_level": 0.95,
+  "method": "percentile; conditional on fitted development models and frozen fusion weights",
+  "comparisons": {
+    "fusion_minus_image": {
+      "AUROC": {
+        "observed": -0.003798,
+        "median": -0.004079,
+        "lower": -0.026579,
+        "upper": 0.018623,
+        "valid_replicates": 1000
+      },
+      "AUPRC": {
+        "observed": -0.003317,
+        "median": -0.00546,
+        "lower": -0.040487,
+        "upper": 0.026457,
+        "valid_replicates": 1000
+      },
+      "Brier": {
+        "observed": 0.000446,
+        "median": 0.000451,
+        "lower": -0.003076,
+        "upper": 0.003971,
+        "valid_replicates": 1000
+      }
+    },
+    "fusion_minus_logistic_A": {
+      "AUROC": {
+        "observed": 0.084582,
+        "median": 0.083689,
+        "lower": 0.047153,
+        "upper": 0.120964,
+        "valid_replicates": 1000
+      },
+      "AUPRC": {
+        "observed": 0.131733,
+        "median": 0.129175,
+        "lower": 0.072019,
+        "upper": 0.187964,
+        "valid_replicates": 1000
+      },
+      "Brier": {
+        "observed": -0.008932,
+        "median": -0.008917,
+        "lower": -0.012948,
+        "upper": -0.005193,
+        "valid_replicates": 1000
+      }
+    }
+  },
+  "note": "Descriptive empirical bootstrap distributions; not converted to claims of statistical significance."
+}

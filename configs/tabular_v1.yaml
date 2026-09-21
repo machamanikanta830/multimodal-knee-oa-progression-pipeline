@@ -1,0 +1,30 @@
+{
+  "run_version": "tabular_primary_v1",
+  "target": "composite_progression",
+  "default_formulation": "A",
+  "feature_sets": ["demographic_clinical", "patient_reported", "physical_function", "formulation_A", "formulation_B"],
+  "categorical_columns": ["sex", "prior_knee_surgery", "family_knee_replacement_history"],
+  "baseline_KL_handling": "Ordinal numeric grade in B only; no derived KL feature in A.",
+  "seed": 62026,
+  "bootstrap_seed": 62027,
+  "bootstrap_replicates": 1000,
+  "selection": ["validation_AUROC_descending", "validation_AUPRC_descending", "validation_Brier_ascending", "candidate_index_ascending"],
+  "logistic_candidates": [{"C": 0.1}, {"C": 1.0}, {"C": 10.0}],
+  "logistic_fixed": {"solver": "lbfgs", "l1_ratio": 0.0, "max_iter": 2000, "tol": 0.00000001, "class_weight": null},
+  "catboost_candidates": [
+    {"depth": 4, "learning_rate": 0.03, "iterations": 800, "l2_leaf_reg": 3.0},
+    {"depth": 4, "learning_rate": 0.06, "iterations": 800, "l2_leaf_reg": 5.0},
+    {"depth": 6, "learning_rate": 0.03, "iterations": 800, "l2_leaf_reg": 5.0}
+  ],
+  "catboost_fixed": {"loss_function": "Logloss", "eval_metric": "AUC", "early_stopping_rounds": 80, "use_best_model": true, "thread_count": 1, "task_type": "CPU", "nan_mode": "Min", "counter_calc_method": "SkipTest", "allow_writing_files": false, "verbose": false},
+  "preprocessing": {
+    "numeric_logistic": "TRAIN median imputation then TRAIN StandardScaler; no missing indicators.",
+    "categorical_logistic": "TRAIN most-frequent imputation; TRAIN one-hot, drop first, handle unknown ignore.",
+    "numeric_catboost": "Native NaN; no imputation or scaling.",
+    "categorical_catboost": "Stateless string conversion; missing token __MISSING__; native categories/CTR/borders learn from TRAIN only."
+  },
+  "calibration_assessment": "Validation joint intercept/slope of unpenalized logistic calibration regression; descriptive only, never applied to probabilities.",
+  "calibration_curve": {"bins": 10, "strategy": "quantile"},
+  "class_weight_sensitivity": false,
+  "test_scoring_permitted": false
+}
